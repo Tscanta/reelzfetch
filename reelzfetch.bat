@@ -1,2 +1,2 @@
 @echo off
-"C:\Program Files\Git\bin\bash.exe" "%~dp0reelfetch.sh" %*
+"C:\Program Files\Git\bin\bash.exe" "%~dp0reelzfetch.sh" %*

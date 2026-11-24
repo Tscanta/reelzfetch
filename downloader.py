@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 import argparse
 import datetime
+import json
+import os
 import re
 import subprocess
 import sys
@@ -9,10 +11,46 @@ import yt_dlp
 from yt_dlp.utils import DownloadError
 
 
-# Locate the project root so downloads/ and logs/ resolve reliably from anywhere.
+# Locate the project root so config/, downloads/, and logs/ resolve reliably from anywhere.
 BASE_DIR = Path(__file__).resolve().parent
 LOG_FILE = BASE_DIR / "logs" / "download.log"
 ARCHIVE_FILE = BASE_DIR / "logs" / "archive.txt"
+CONFIG_FILE = BASE_DIR / "config.json"
+
+
+def load_default_out_dir() -> Path:
+    """Read custom default download folder from config.json, or fall back to ./downloads."""
+    if CONFIG_FILE.exists():
+        try:
+            data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+            saved = data.get("default_out_dir", "").strip()
+            if saved:
+                return Path(os.path.expanduser(saved)).resolve()
+        except (OSError, json.JSONDecodeError):
+            pass
+    return (BASE_DIR / "downloads").resolve()
+
+
+def save_default_out_dir(custom_dir: str) -> Path:
+    """Persist a user-chosen default download folder into config.json."""
+    target = Path(os.path.expanduser(custom_dir.strip())).resolve()
+    target.mkdir(parents=True, exist_ok=True)
+    CONFIG_FILE.write_text(
+        json.dumps({"default_out_dir": str(target)}, indent=2),
+        encoding="utf-8",
+    )
+    return target
+
+
+def make_clickable_path(path: Path, label: str | None = None) -> str:
+    """Wrap a local Path in an OSC 8 file:// hyperlink supported by Windows Terminal, VS Code, and Git Bash."""
+    resolved = path.resolve()
+    display_text = label if label is not None else str(resolved)
+    # Respect NO_COLOR / dumb terminals by falling back to plain text.
+    if os.environ.get("NO_COLOR") or os.environ.get("TERM") == "dumb":
+        return display_text
+    uri = resolved.as_uri()
+    return f"\033]8;;{uri}\033\\{display_text}\033]8;;\033\\"
 
 
 def write_log(level: str, message: str) -> None:
@@ -89,7 +127,6 @@ def download_video(url: str, video_dir: Path, browser: str | None = None, force:
         "no_warnings": True,
         "noprogress": True,
         "progress_hooks": [download_progress_hook],
-        # Prevent yt-dlp from crashing on Windows consoles with non-ASCII output.
         "encoding": "utf-8",
     }
 
@@ -122,7 +159,6 @@ def download_video(url: str, video_dir: Path, browser: str | None = None, force:
         ) from exc
 
     if not filepath.exists():
-        # Check if a matching file exists with a different extension before failing.
         matches = list(video_dir.glob(f"*_{info.get('id', '')}.*")) if info else []
         if matches:
             filepath = matches[0]
@@ -166,7 +202,6 @@ def convert_to_wav(mp4_path: Path, audio_dir: Path) -> Path:
     print_status("CONVERT", "Extracting audio track and encoding 16-bit WAV (44.1 kHz)...")
 
     try:
-        # UTF-8 + errors="replace" prevents cp1252 crashes when filenames/logs contain emojis.
         result = subprocess.run(
             cmd,
             stdout=subprocess.PIPE,
@@ -194,22 +229,41 @@ def convert_to_wav(mp4_path: Path, audio_dir: Path) -> Path:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="ReelFetch Python Media Engine")
-    parser.add_argument("url", help="Instagram Reel or Post URL")
+    parser.add_argument("url", nargs="?", help="Instagram Reel or Post URL")
     parser.add_argument("--mode", choices=["video", "audio", "both"], default="video")
-    parser.add_argument("--out-dir", help="Custom base output directory")
+    parser.add_argument("--out-dir", help="One-time custom base output directory")
+    parser.add_argument("--set-dir", help="Save a new permanent default download directory")
     parser.add_argument("--browser", help="Browser name for cookies (e.g., chrome, firefox, edge)")
     parser.add_argument("--force", action="store_true", help="Re-download even if in archive.txt")
     args = parser.parse_args()
 
+    # Handle --set-dir (save persistent custom download folder)
+    if args.set_dir:
+        try:
+            saved_dir = save_default_out_dir(args.set_dir)
+            print("============================================================")
+            print(f"  Default download folder updated!")
+            print(f"  -> Location : {make_clickable_path(saved_dir)}")
+            print("============================================================")
+            if not args.url:
+                return 0
+        except OSError as exc:
+            print_status("FAILED", f"Could not save custom directory '{args.set_dir}': {exc}")
+            return 1
+
+    if not args.url:
+        print_status("ERROR", "Missing Instagram Reel URL.")
+        return 1
+
     total_steps = 2 if args.mode == "video" else 3
-    base_out = Path(args.out_dir).resolve() if args.out_dir else BASE_DIR / "downloads"
+    base_out = Path(os.path.expanduser(args.out_dir)).resolve() if args.out_dir else load_default_out_dir()
     video_dir = base_out / "videos"
     audio_dir = base_out / "audio"
 
     print("------------------------------------------------------------")
     print(f"  Target URL : {args.url}")
     print(f"  Mode       : {args.mode.upper()}")
-    print(f"  Output Dir : {base_out}")
+    print(f"  Save Folder: {make_clickable_path(base_out)}  (Ctrl+Click to open)")
     if args.browser:
         print(f"  Cookies    : {args.browser}")
     print("------------------------------------------------------------\n")
@@ -248,7 +302,9 @@ def main() -> int:
         print("============================================================")
         print("  DONE! All tasks completed successfully.")
         for label, path in saved_files:
-            print(f"  -> {label:<10}: {path}")
+            print(f"  -> {label:<10}: {make_clickable_path(path)}")
+            print(f"     Folder    : {make_clickable_path(path.parent)}")
+        print("  (Tip: Ctrl+Click any path above to open it directly)")
         print("============================================================")
         return 0
 
@@ -262,7 +318,7 @@ def main() -> int:
         print("")
         print("============================================================")
         print_status("FAILED", str(exc))
-        print(f"  -> Full log : {LOG_FILE}")
+        print(f"  -> Full log : {make_clickable_path(LOG_FILE)}")
         print("============================================================")
         return 1
 
