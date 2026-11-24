@@ -5,9 +5,42 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PYTHON_SCRIPT="$SCRIPT_DIR/downloader.py"
 CONFIG_FILE="$SCRIPT_DIR/config.json"
 
+PYTHON_BIN=""
+for candidate in python python3; do
+  if command -v "$candidate" >/dev/null 2>&1 && "$candidate" -c "import yt_dlp" >/dev/null 2>&1; then
+    PYTHON_BIN="$candidate"
+    break
+  fi
+done
+
+if [[ -z "$PYTHON_BIN" ]] && command -v py >/dev/null 2>&1 && py -3 -c "import yt_dlp" >/dev/null 2>&1; then
+  PYTHON_BIN="py"
+fi
+
+if [[ -z "$PYTHON_BIN" ]]; then
+  if command -v python3 >/dev/null 2>&1; then
+    PYTHON_BIN="python3"
+  elif command -v python >/dev/null 2>&1; then
+    PYTHON_BIN="python"
+  elif command -v py >/dev/null 2>&1; then
+    PYTHON_BIN="py"
+  else
+    echo "[ERROR] Python is not installed or not in PATH."
+    exit 1
+  fi
+fi
+
+run_python() {
+  if [[ "$PYTHON_BIN" == "py" ]]; then
+    py -3 "$@"
+  else
+    "$PYTHON_BIN" "$@"
+  fi
+}
+
 get_current_out_dir() {
   if [[ -f "$CONFIG_FILE" ]]; then
-    "$PYTHON_BIN" -c 'import json, pathlib; p = pathlib.Path(r"'"$CONFIG_FILE"'"); print(json.loads(p.read_text(encoding="utf-8")).get("default_out_dir", ""))' 2>/dev/null || echo "$SCRIPT_DIR/downloads"
+    run_python -c 'import json, pathlib; p = pathlib.Path(r"'"$CONFIG_FILE"'"); print(json.loads(p.read_text(encoding="utf-8")).get("default_out_dir", ""))' 2>/dev/null || echo "$SCRIPT_DIR/downloads"
   else
     echo "$SCRIPT_DIR/downloads"
   fi
@@ -56,15 +89,6 @@ EXAMPLES:
 EOF
 }
 
-if command -v python3 >/dev/null 2>&1; then
-  PYTHON_BIN="python3"
-elif command -v python >/dev/null 2>&1; then
-  PYTHON_BIN="python"
-else
-  echo "[ERROR] Python is not installed or not in PATH."
-  exit 1
-fi
-
 if ! command -v ffmpeg >/dev/null 2>&1; then
   echo "[ERROR] FFmpeg is not installed or not in PATH."
   exit 1
@@ -87,7 +111,7 @@ if [[ $# -eq 0 ]]; then
 
   read -r -p "Custom save folder (press Enter to keep current default): " CUSTOM_PATH
 
-  CMD=("$PYTHON_BIN" "$PYTHON_SCRIPT" "$INPUT_URL" "--mode" "$MODE")
+  CMD=("$PYTHON_SCRIPT" "$INPUT_URL" "--mode" "$MODE")
   if [[ -n "${CUSTOM_PATH// }" ]]; then
     read -r -p "Save this folder as your permanent default? [y/N]: " MAKE_DEFAULT
     if [[ "$MAKE_DEFAULT" =~ ^[Yy]$ ]]; then
@@ -98,7 +122,7 @@ if [[ $# -eq 0 ]]; then
   fi
 
   echo ""
-  "${CMD[@]}"
+  run_python "${CMD[@]}"
   exit $?
 fi
 
@@ -171,7 +195,7 @@ fi
 print_banner
 echo ""
 
-CMD=("$PYTHON_BIN" "$PYTHON_SCRIPT")
+CMD=("$PYTHON_SCRIPT")
 [[ -n "$URL" ]] && CMD+=("$URL")
 CMD+=("--mode" "$MODE")
 [[ -n "$BROWSER" ]] && CMD+=("--browser" "$BROWSER")
@@ -179,4 +203,4 @@ CMD+=("--mode" "$MODE")
 [[ -n "$SET_DIR" ]] && CMD+=("--set-dir" "$SET_DIR")
 [[ -n "$FORCE_FLAG" ]] && CMD+=("$FORCE_FLAG")
 
-"${CMD[@]}"
+run_python "${CMD[@]}"
