@@ -101,6 +101,7 @@ def download_video(url: str, video_dir: Path, browser: str | None = None, force:
 
     print_status("INFO", "Connecting to Instagram and inspecting media metadata...")
 
+    info = None
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
@@ -116,14 +117,13 @@ def download_video(url: str, video_dir: Path, browser: str | None = None, force:
             print_status("FOUND", f"Creator: @{uploader} | Title: \"{title}\"")
     except DownloadError as exc:
         raise RuntimeError(
-            f"yt-dlp download failed: {exc}. "
-            "Tip: If Instagram blocks access or requires login, try --browser chrome (or firefox/edge), "
+            f"Download error: {exc}. Try --browser chrome if login is required, "
             "or update yt-dlp with 'pip install -U yt-dlp'."
         ) from exc
 
     if not filepath.exists():
         # Check if a matching file exists with a different extension before failing.
-        matches = list(video_dir.glob(f"*_{info.get('id', '')}.*")) if "info" in locals() and info else []
+        matches = list(video_dir.glob(f"*_{info.get('id', '')}.*")) if info else []
         if matches:
             filepath = matches[0]
         else:
@@ -166,7 +166,7 @@ def convert_to_wav(mp4_path: Path, audio_dir: Path) -> Path:
     print_status("CONVERT", "Extracting audio track and encoding 16-bit WAV (44.1 kHz)...")
 
     try:
-        # encoding="utf-8" + errors="replace" prevents cp1252 UnicodeDecodeError in _readerthread.
+        # UTF-8 + errors="replace" prevents cp1252 crashes when filenames/logs contain emojis.
         result = subprocess.run(
             cmd,
             stdout=subprocess.PIPE,
@@ -177,15 +177,15 @@ def convert_to_wav(mp4_path: Path, audio_dir: Path) -> Path:
             timeout=300,
         )
     except FileNotFoundError as exc:
-        raise RuntimeError("FFmpeg executable not found. Ensure FFmpeg is installed and in your PATH.") from exc
+        raise RuntimeError("FFmpeg not found. Verify FFmpeg is installed and available in PATH.") from exc
     except subprocess.TimeoutExpired as exc:
         wav_path.unlink(missing_ok=True)
-        raise RuntimeError("FFmpeg timed out after 5 minutes while converting audio.") from exc
+        raise RuntimeError("FFmpeg timed out while converting audio to WAV.") from exc
 
     if result.returncode != 0 or not wav_path.exists() or wav_path.stat().st_size == 0:
         wav_path.unlink(missing_ok=True)
-        write_log("FFMPEG_STDERR", result.stderr or "(no stderr output)")
-        raise RuntimeError("FFmpeg audio conversion failed. Check logs/download.log for full FFmpeg output.")
+        write_log("FFMPEG_STDERR", result.stderr or "(empty stderr)")
+        raise RuntimeError("FFmpeg conversion failed. Check logs/download.log for details.")
 
     size_str = format_size(wav_path.stat().st_size)
     print_status("SAVED", f"WAV ready -> {wav_path.name} ({size_str})")
