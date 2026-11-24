@@ -56,10 +56,7 @@ EXAMPLES:
 EOF
 }
 
-WIN_PYTHON="/c/Users/TSHEDUP/AppData/Local/Programs/Python/Python311/python.exe"
-if [[ -x "$WIN_PYTHON" ]]; then
-  PYTHON_BIN="$WIN_PYTHON"
-elif command -v python3 >/dev/null 2>&1; then
+if command -v python3 >/dev/null 2>&1; then
   PYTHON_BIN="python3"
 elif command -v python >/dev/null 2>&1; then
   PYTHON_BIN="python"
