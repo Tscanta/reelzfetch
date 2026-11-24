@@ -3,38 +3,54 @@
 # and fail a pipeline if any command inside it fails (-o pipefail).
 set -euo pipefail
 
-# Find the exact folder where reelfetch.sh lives so we can reliably locate downloader.py.
+# Locate the folder containing this script so downloader.py is always found reliably.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PYTHON_SCRIPT="$SCRIPT_DIR/downloader.py"
 
-# Print usage instructions and available flags for the user.
-print_help() {
-  cat <<EOF
-ReelFetch - Terminal Instagram Reel Downloader & WAV Converter
-
-Usage:
-  ./reelfetch.sh <INSTAGRAM_REEL_URL> [OPTIONS]
-
-Modes (pick one, defaults to --video):
-  --video             Download Reel as MP4
-  --audio             Extract audio and save as WAV
-  --both              Save both MP4 video and WAV audio
-
-Options:
-  --browser <name>    Use browser cookies for login-walled Reels (chrome, firefox, edge)
-  --out <dir>         Custom output base directory (default: ./downloads)
-  --force             Re-download even if Reel ID is already in archive.txt
-  -h, --help          Show this help message
-
-Examples:
-  ./reelfetch.sh "https://www.instagram.com/reel/ABC123xyz/" --video
-  ./reelfetch.sh "https://www.instagram.com/reel/ABC123xyz/" --audio --browser chrome
-  ./reelfetch.sh "https://www.instagram.com/reel/ABC123xyz/" --both --out ~/Desktop/reels
+# Print the ASCII title banner.
+print_banner() {
+  cat <<'EOF'
+____  _____ _____ _     _____ _____ _____ _____ ____ _   _
+ |  _ \| ____| ____| |   |__  /|  ___| ____|_   _/ ___| | | |
+ | |_) |  _| |  _| | |     / / | |_  |  _|   | || |   | |_| |
+ |  _ <| |___| |___| |___ / /_ |  _| | |___  | || |___|  _  |
+ |_| \_\_____|_____|_____/____||_|   |_____| |_| \____|_| |_|
+        Terminal Instagram Reel Downloader & WAV Converter
 EOF
 }
 
-# Check whether Python is installed as `python3` or `python` (common on Windows Git Bash).
-if command -v python3 >/dev/null 2>&1; then
+# Print the ASCII banner along with clear usage instructions and examples.
+print_usage() {
+  print_banner
+  cat <<'EOF'
+
+HOW TO RUN IT:
+  ./reelfetch.sh "<INSTAGRAM_REEL_URL>" [MODE] [OPTIONS]
+
+MODES (defaults to --video):
+  --video             Download the Reel as an MP4 video
+  --audio             Extract audio and save as a WAV file
+  --both              Save both MP4 video and WAV audio
+
+OPTIONS:
+  --browser <name>    Use browser cookies for login-walled Reels (chrome, firefox, edge)
+  --out <dir>         Custom output base directory (default: ./downloads)
+  --force             Re-download even if the Reel ID is already in logs/archive.txt
+  -h, --help          Display this banner and usage guide
+
+EXAMPLES:
+  ./reelfetch.sh "https://www.instagram.com/reel/ABC123xyz/" --video
+  ./reelfetch.sh "https://www.instagram.com/reel/ABC123xyz/" --audio --browser chrome
+  ./reelfetch.sh "https://www.instagram.com/reel/ABC123xyz/" --both --out ./my_reels
+
+EOF
+}
+
+# Prefer Windows Python 3.11 if present, otherwise fall back to python3 / python.
+WIN_PYTHON="/c/Users/TSHEDUP/AppData/Local/Programs/Python/Python311/python.exe"
+if [[ -x "$WIN_PYTHON" ]]; then
+  PYTHON_BIN="$WIN_PYTHON"
+elif command -v python3 >/dev/null 2>&1; then
   PYTHON_BIN="python3"
 elif command -v python >/dev/null 2>&1; then
   PYTHON_BIN="python"
@@ -43,59 +59,51 @@ else
   exit 1
 fi
 
-# Make sure FFmpeg is installed before starting since WAV conversion depends on it.
+# Verify FFmpeg is available before running.
 if ! command -v ffmpeg >/dev/null 2>&1; then
   echo "[ERROR] FFmpeg is not installed or not in PATH."
   exit 1
 fi
 
-# If the user runs ./reelfetch.sh with no arguments at all, show help and exit.
+# Show banner + instructions if no arguments are passed.
 if [[ $# -eq 0 ]]; then
-  print_help
-  exit 1
+  print_usage
+  exit 0
 fi
 
-# Default values for command-line arguments and options.
 URL=""
 MODE="video"
 BROWSER=""
 OUT_DIR=""
 FORCE_FLAG=""
 
-# Loop through all passed arguments ($@) one by one until none remain.
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -h|--help)
-      print_help
+      print_usage
       exit 0
       ;;
     --video)
-      # Set mode to video-only (MP4) and move to the next argument.
       MODE="video"
       shift
       ;;
     --audio)
-      # Set mode to audio-only (WAV) and move to the next argument.
       MODE="audio"
       shift
       ;;
     --both)
-      # Save both MP4 and WAV files.
       MODE="both"
       shift
       ;;
     --browser)
-      # Grab the browser name right after --browser and ensure it isn't empty.
       BROWSER="${2:-}"
       if [[ -z "$BROWSER" ]]; then
         echo "[ERROR] --browser requires a browser name (e.g., chrome, firefox)."
         exit 1
       fi
-      # Shift twice because we consumed both `--browser` and its value.
       shift 2
       ;;
     --out)
-      # Grab the custom output folder path and ensure a value was provided.
       OUT_DIR="${2:-}"
       if [[ -z "$OUT_DIR" ]]; then
         echo "[ERROR] --out requires a directory path."
@@ -104,18 +112,15 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --force)
-      # Pass --force to Python so previously archived Reels get re-downloaded.
       FORCE_FLAG="--force"
       shift
       ;;
     -*)
-      # Catch any unknown flag starting with a dash.
       echo "[ERROR] Unknown option: $1"
-      print_help
+      echo "Run './reelfetch.sh --help' to see valid options."
       exit 1
       ;;
     *)
-      # Treat the first non-flag argument as the Instagram Reel URL.
       if [[ -z "$URL" ]]; then
         URL="$1"
       else
@@ -127,18 +132,19 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Ensure a URL was actually provided somewhere in the arguments.
 if [[ -z "$URL" ]]; then
   echo "[ERROR] Missing Instagram Reel URL."
-  print_help
+  echo "Run './reelfetch.sh --help' for usage instructions."
   exit 1
 fi
 
-# Build the final Python command array safely (handles spaces in paths or URLs).
+# Display the banner cleanly at the start of an active download/conversion run.
+print_banner
+echo ""
+
 CMD=("$PYTHON_BIN" "$PYTHON_SCRIPT" "$URL" "--mode" "$MODE")
 [[ -n "$BROWSER" ]] && CMD+=("--browser" "$BROWSER")
 [[ -n "$OUT_DIR" ]] && CMD+=("--out-dir" "$OUT_DIR")
 [[ -n "$FORCE_FLAG" ]] && CMD+=("$FORCE_FLAG")
 
-# Execute downloader.py with the assembled arguments.
 "${CMD[@]}"
